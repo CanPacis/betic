@@ -1,0 +1,25 @@
+import "os.typescript"
+
+func -> List<Byte> read_file(String path) {
+	provide EngineOsPort:read_file(path)
+}
+
+micro -> List<Byte> read_as_file String path {
+	provide EngineOsPort:read_file(path)
+}
+
+func -> Void write_file(String path, String data) {
+	EngineOsPort:write_file(path, data)
+}
+
+func -> Void write_file_bytes(String path, List<Byte> data) {
+	EngineOsPort:write_file(path, data)
+}
+
+macro -> Void write_to_file String data (String path) {
+	EngineOsPort:write_file(path, data)
+}
+
+macro -> Void write_to_file_as_bytes List<Byte> data (String path) {
+	EngineOsPort:write_file(path, data)
+}

@@ -1,0 +1,25 @@
+micro -> Int length List<Occult> list {
+	provide len(list)
+}
+
+micro -> Int str_length String string {
+	provide len(split_str(string))
+}
+
+micro -> Int to_int Occult value {
+	provide make:int(value)
+}
+
+micro -> String to_string Occult value {
+	provide make:string(value)
+}
+
+micro -> Void print Occult value {
+	console:write(value)
+}
+
+macro -> Void map List<Occult> list (Function<Occult> callbackfn) {
+	for list.length as i {
+		list[i] = callbackfn(i)
+	}
+}
