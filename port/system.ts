@@ -101,7 +101,8 @@ export default class System {
 			return {
 				async func(_engine: any, data: PrimitiveData) {
 					return BeticUtility.GeneratePrimitive(
-						JSON.parse(data.representation.value as string)
+						JSON.parse(data.representation.value as string),
+						{ base: 'Occult' }
 					);
 				},
 			};
@@ -111,7 +112,7 @@ export default class System {
 				async func(_engine: any, data: PrimitiveData) {
 					let uint8array = BeticUtility.FromBeticListToUint8Array(data);
 					let value = new TextDecoder().decode(uint8array);
-					return BeticUtility.GeneratePrimitive(JSON.parse(value));
+					return BeticUtility.GeneratePrimitive(JSON.parse(value), { base: 'Occult' });
 				},
 			};
 		},

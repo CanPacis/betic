@@ -36,21 +36,23 @@ import {
 } from './type/representation.ts';
 import BeticUtility from './util.ts';
 
-interface BeticPrimitiveFrame {
+export interface BeticPrimitiveFrame {
 	[key: string]: PrimitiveData;
 }
 
-interface BeticTypeFrame {
+export interface BeticTypeFrame {
 	[key: string]: TypeData;
 }
 
-interface Callstack {
+export interface Callstack {
 	name: string;
-	callbackfn: Function;
 	body: BeticProgramStatement[];
+	type: 'function' | 'micro' | 'macro' | 'init';
+	id: string;
 }
 
 export default class BeticEngine {
+	id: string;
 	content!: string;
 	fileName!: string;
 	parsed!: BeticProgram;
@@ -59,7 +61,12 @@ export default class BeticEngine {
 	primitiveFrame: BeticPrimitiveFrame[];
 	typeFrame: BeticTypeFrame;
 	callstack: Callstack[];
-	constructor(public path: string | 'Anonymous', public system = false) {
+	constructor(
+		public path: string | 'Anonymous',
+		public onStack: { push: Function; pop: Function },
+		public system = false
+	) {
+		this.id = v4.generate();
 		this.imports = [];
 		this.callstack = [];
 		this.primitiveFrame = [{}];
@@ -155,6 +162,10 @@ export default class BeticEngine {
 		return this.primitiveFrame[this.primitiveFrame.length - 1];
 	}
 
+	get currentCallstack(): Callstack {
+		return this.callstack[this.callstack.length - 1];
+	}
+
 	async init() {
 		if (this.path !== 'Anonymous') {
 			try {
@@ -191,19 +202,35 @@ export default class BeticEngine {
 		await this.injectTypescriptFile('./port/system.ts');
 
 		if (this.system == false) {
-			let system = new BeticEngine(Path.join(Deno.cwd(), 'lib/system.btc'), true);
+			let system = new BeticEngine(
+				Path.join(Deno.cwd(), 'lib/system.btc'),
+				this.onStack,
+				true
+			);
 			await system.init();
-			await system.start();
+			await system.run();
 
-			this.imports.push({ id: v4.generate(), engine: system });
+			this.imports.push({ id: system.id, engine: system });
 		}
 
 		await this.resolveImports();
+		this.callstack.push({
+			name: 'main()',
+			body: this.parsed.program,
+			type: 'init',
+			id: this.id,
+		});
 	}
 
-	async start() {
-		for await (const instruction of this.parsed.program) {
-			await this.resolveStatement(instruction);
+	async run() {
+		let callstack = this.currentCallstack;
+		if (callstack) {
+			this.onStack.push(callstack);
+			for await (const instruction of callstack.body) {
+				await this.resolveStatement(instruction);
+			}
+			this.onStack.pop();
+			this.callstack.pop();
 		}
 	}
 
@@ -260,10 +287,10 @@ export default class BeticEngine {
 			Deno.exit();
 		}
 
-		let engine = new BeticEngine(src);
+		let engine = new BeticEngine(src, this.onStack);
 		await engine.init();
-		await engine.start();
-		this.imports.push({ id: v4.generate(), engine });
+		await engine.run();
+		this.imports.push({ id: engine.id, engine });
 	}
 
 	async resolveStatement(statement: BeticProgramStatement): Promise<void> {
@@ -319,6 +346,7 @@ export default class BeticEngine {
 		} else {
 			value.representation.expected = statement.expected;
 			value.representation.constant = statement.constant;
+			value.representation.name = statement.name;
 			this.currentFrame[statement.name] = value;
 		}
 	}
@@ -413,11 +441,13 @@ export default class BeticEngine {
 				for await (const instruction of statement.body.block) {
 					await this.resolveStatement(instruction);
 				}
-				// if (statement.body.provides) {
-				// 	return this.resolveExpression(statement.body.provides.body, frame);
-				// } else {
-				// 	return { type: { base: 'None' }, value: 'none' };
-				// }
+
+				if (statement.body.provides) {
+					let provides = await this.resolveExpression(statement.body.provides.body);
+					this.callstack.pop();
+				} else {
+					// return { type: { base: 'None' }, value: 'none' };
+				}
 			} else {
 				let executedElif = false;
 
@@ -452,11 +482,14 @@ export default class BeticEngine {
 							await this.resolveStatement(instruction);
 						}
 
-						// if (statement.else.provides) {
-						// 	return this.resolveExpression(statement.else.provides.body, frame);
-						// } else {
-						// 	return { type: { base: 'None' }, value: 'none' };
-						// }
+						if (statement.body.provides) {
+							let provides = await this.resolveExpression(
+								statement.body.provides.body
+							);
+							this.callstack.pop();
+						} else {
+							// return { type: { base: 'None' }, value: 'none' };
+						}
 					}
 				}
 			}
@@ -544,10 +577,10 @@ export default class BeticEngine {
 
 				switch (modifier.type) {
 					case 'increment':
-						(statement.value as number)++;
+						result = (statement.value as number) + 1;
 						break;
 					case 'decrement':
-						(statement.value as number)--;
+						result = (statement.value as number) - 1;
 						break;
 					case 'add':
 						var value = statement.value as number;
@@ -602,27 +635,31 @@ export default class BeticEngine {
 	}
 
 	async resolveExpression(expression: BeticExpressionStatement): Promise<PrimitiveData> {
-		switch (expression.operation) {
-			case 'arithmetic':
-				return this.resolveArithmeticExpression(expression);
-			case 'map_value_getter':
-				return this.resolveMapValueGetterExpression(expression);
-			case 'list_value_getter':
-				return this.resolveListValueGetterExpression(expression);
-			case 'function_call':
-				return this.resolveFunctionCallExpression(expression);
-			case 'micro_call':
-				return this.resolveMicroCallExpression(expression);
-			case 'macro_call':
-				return BeticUtility.GeneratePrimitive(null);
-			case 'condition':
-				return this.resolveConditionExpression(expression);
-			case 'manuel_cast':
-				return BeticUtility.GeneratePrimitive(null);
-			case 'primitive':
-				return this.resolvePrimitiveExpression(expression);
-			case 'reference':
-				return (await this.resolveReferenceExpression(expression)) as PrimitiveData;
+		if (expression) {
+			switch (expression.operation) {
+				case 'arithmetic':
+					return this.resolveArithmeticExpression(expression);
+				case 'map_value_getter':
+					return this.resolveMapValueGetterExpression(expression);
+				case 'list_value_getter':
+					return this.resolveListValueGetterExpression(expression);
+				case 'function_call':
+					return this.resolveFunctionCallExpression(expression);
+				case 'micro_call':
+					return this.resolveMicroCallExpression(expression);
+				case 'macro_call':
+					return BeticUtility.GeneratePrimitive(null);
+				case 'condition':
+					return this.resolveConditionExpression(expression);
+				case 'manuel_cast':
+					return BeticUtility.GeneratePrimitive(null);
+				case 'primitive':
+					return this.resolvePrimitiveExpression(expression);
+				case 'reference':
+					return (await this.resolveReferenceExpression(expression)) as PrimitiveData;
+			}
+		} else {
+			return BeticUtility.GeneratePrimitive(null);
 		}
 	}
 
@@ -821,11 +858,45 @@ export default class BeticEngine {
 		let name = await this.resolveExpression(expression.name);
 
 		if (name.representation.type.base == 'Function') {
+			let func = name.representation as BeticFunctionRepresentation;
+
 			let args: PrimitiveData[] = [];
 
 			for await (const arg of expression.arguments) {
 				args.push(await this.resolveExpression(arg));
 			}
+
+			func.arguments.forEach((arg, i) => {
+				if (args[i]) {
+					if (!BeticUtility.DiffTypes(args[i].representation.type, arg.type)) {
+						BeticUtility.Error(
+							this,
+							BeticUtility.ErrorTitle.TypeMismatch,
+							`Function expects parameter '${
+								arg.value
+							}' to be type ${BeticUtility.SerializeType(
+								arg.type
+							)} but type ${BeticUtility.SerializeType(
+								args[i].representation.type
+							)} is given`,
+							expression.position
+						);
+						Deno.exit();
+					}
+				} else {
+					if (!arg.optional) {
+						BeticUtility.Error(
+							this,
+							BeticUtility.ErrorTitle.MissingArgument,
+							`Function expected a value for parameter '${
+								arg.value
+							}' (${BeticUtility.SerializeType(arg.type)})`,
+							expression.position
+						);
+						Deno.exit();
+					}
+				}
+			});
 
 			if (name.engine === null) {
 				return await this.runFunction(expression, args);
@@ -855,15 +926,30 @@ export default class BeticEngine {
 
 		if (name.type.base === 'Micro') {
 			let arg = await this.resolveExpression(expression.arguments[0]);
+			let name = await this.resolveExpression(expression.name);
+			let micro = name.representation as BeticMicroRepresentation;
 
-			if (supname.engine === null) {
-			} else {
-				let use = this.imports.find((use) => use.id === supname.engine);
-				if (use) {
-					return await use.engine.runMicro(expression, arg);
+			if (BeticUtility.DiffTypes(micro.prototype.type, arg.representation.type)) {
+				if (supname.engine === null) {
+					return await this.runMicro(expression, arg);
+				} else {
+					let use = this.imports.find((use) => use.id === supname.engine);
+					if (use) {
+						return await use.engine.runMicro(expression, arg);
+					}
 				}
+				return BeticUtility.GeneratePrimitive(null);
+			} else {
+				BeticUtility.Error(
+					this,
+					BeticUtility.ErrorTitle.TypeMismatch,
+					`Micro expects parameter prototype to be type ${BeticUtility.SerializeType(
+						micro.prototype.type
+					)} but type ${BeticUtility.SerializeType(arg.representation.type)} is given`,
+					expression.position
+				);
+				Deno.exit();
 			}
-			return BeticUtility.GeneratePrimitive(null);
 		} else {
 			BeticUtility.Error(
 				this,
@@ -970,42 +1056,13 @@ export default class BeticEngine {
 		args: PrimitiveData[]
 	): Promise<PrimitiveData> {
 		let name = await this.resolveExpression(expression.name);
-		let type = name.representation.value.constructor.name;
 		let func = name.representation as BeticFunctionRepresentation;
+		let type = name.representation.value.constructor.name;
 
 		let subframe: BeticPrimitiveFrame = { ...this.currentFrame };
+
 		func.arguments.forEach((arg, i) => {
-			if (args[i]) {
-				if (BeticUtility.DiffTypes(args[i].representation.type, arg.type)) {
-					subframe[arg.value] = args[i];
-				} else {
-					BeticUtility.Error(
-						this,
-						BeticUtility.ErrorTitle.TypeMismatch,
-						`Function expects parameter '${
-							arg.value
-						}' to be type ${BeticUtility.SerializeType(
-							arg.type
-						)} but type ${BeticUtility.SerializeType(
-							args[i].representation.type
-						)} is given`,
-						expression.position
-					);
-					Deno.exit();
-				}
-			} else {
-				if (!arg.optional) {
-					BeticUtility.Error(
-						this,
-						BeticUtility.ErrorTitle.MissingArgument,
-						`Function expected a value for parameter '${
-							arg.value
-						}' (${BeticUtility.SerializeType(arg.type)})`,
-						expression.position
-					);
-					Deno.exit();
-				}
-			}
+			subframe[arg.value] = args[i];
 		});
 
 		if (type === 'Function' || type === 'AsyncFunction') {
@@ -1020,22 +1077,34 @@ export default class BeticEngine {
 			}
 		} else if (type === 'Array') {
 			this.primitiveFrame.push(subframe);
-			for await (const instruction of func.value) {
-				await this.resolveStatement(instruction);
-			}
-
 			if (func.provides) {
-				let provides = await this.resolveExpression(func.provides.body);
-				this.primitiveFrame.pop();
-				if (provides) {
-					return provides;
-				} else {
-					return BeticUtility.GeneratePrimitive(null);
-				}
-			} else {
-				this.primitiveFrame.pop();
-				return BeticUtility.GeneratePrimitive(null);
+				func.value.push(func.provides.body);
 			}
+			this.callstack.push({
+				name: func.name || 'anonymous',
+				body: func.value,
+				type: 'function',
+				id: name.engine || this.id,
+			});
+			await this.run();
+			this.primitiveFrame.pop();
+			return BeticUtility.GeneratePrimitive(null);
+			// for await (const instruction of func.value) {
+			// 	await this.resolveStatement(instruction);
+			// }
+
+			// if (func.provides) {
+			// 	let provides = await this.resolveExpression(func.provides.body);
+			// 	this.primitiveFrame.pop();
+			// 	if (provides) {
+			// 		return provides;
+			// 	} else {
+			// 		return BeticUtility.GeneratePrimitive(null);
+			// 	}
+			// } else {
+			// 	this.primitiveFrame.pop();
+			// 	return BeticUtility.GeneratePrimitive(null);
+			// }
 		}
 
 		return BeticUtility.GeneratePrimitive(null);
@@ -1050,69 +1119,33 @@ export default class BeticEngine {
 
 		let subframe: BeticPrimitiveFrame = { ...this.currentFrame };
 
-		if (BeticUtility.DiffTypes(micro.prototype.type, arg.representation.type)) {
-			this.primitiveFrame.push(subframe);
-			this.currentFrame[micro.prototype.value] = arg;
-			for await (const instruction of micro.value) {
-				await this.resolveStatement(instruction);
-			}
-
-			if (micro.provides) {
-				let provides = await this.resolveExpression(micro.provides.body);
-				this.primitiveFrame.pop();
-				if (provides) {
-					return provides;
-				} else {
-					return BeticUtility.GeneratePrimitive(null);
-				}
-			} else {
-				this.primitiveFrame.pop();
-				return BeticUtility.GeneratePrimitive(null);
-			}
-		} else {
-			BeticUtility.Error(
-				this,
-				BeticUtility.ErrorTitle.TypeMismatch,
-				`Micro expects parameter prototype to be type ${BeticUtility.SerializeType(
-					micro.prototype.type
-				)} but type ${BeticUtility.SerializeType(arg.representation.type)} is given`,
-				expression.position
-			);
-			Deno.exit();
+		this.primitiveFrame.push(subframe);
+		this.currentFrame[micro.prototype.value] = arg;
+		if (micro.provides) {
+			micro.value.push(micro.provides.body);
 		}
-		// func.arguments.forEach((arg, i) => {
-		// 	if (args[i]) {
-		// 		if (BeticUtility.DiffTypes(args[i].representation.type, arg.type)) {
-		// 			subframe[arg.value] = args[i];
-		// 		} else {
-		// 			BeticUtility.Error(
-		// 				this,
-		// 				BeticUtility.ErrorTitle.TypeMismatch,
-		// 				`Function expects parameter '${
-		// 					arg.value
-		// 				}' to be type ${BeticUtility.SerializeType(
-		// 					arg.type
-		// 				)} but type ${BeticUtility.SerializeType(
-		// 					args[i].representation.type
-		// 				)} is given`,
-		// 				expression.position
-		// 			);
-		// 			Deno.exit();
-		// 		}
+		this.callstack.push({
+			name: micro.name || 'anonymous',
+			body: micro.value,
+			type: 'micro',
+			id: name.engine || this.id,
+		});
+		await this.run();
+		this.primitiveFrame.pop();
+		return BeticUtility.GeneratePrimitive(null);
+
+		// if (micro.provides) {
+		// 	let provides = await this.resolveExpression(micro.provides.body);
+		// 	this.primitiveFrame.pop();
+		// 	if (provides) {
+		// 		return provides;
 		// 	} else {
-		// 		if (!arg.optional) {
-		// 			BeticUtility.Error(
-		// 				this,
-		// 				BeticUtility.ErrorTitle.MissingArgument,
-		// 				`Function expected a value for parameter '${
-		// 					arg.value
-		// 				}' (${BeticUtility.SerializeType(arg.type)})`,
-		// 				expression.position
-		// 			);
-		// 			Deno.exit();
-		// 		}
+		// 		return BeticUtility.GeneratePrimitive(null);
 		// 	}
-		// });
+		// } else {
+		// 	this.primitiveFrame.pop();
+		// 	return BeticUtility.GeneratePrimitive(null);
+		// }
 	}
 
 	async resolvePrimitiveExpression(expression: BeticPrimitiveExpression): Promise<PrimitiveData> {
@@ -1165,6 +1198,7 @@ export default class BeticEngine {
 						value: listValue,
 						expected: false,
 						constant: false,
+						name: null,
 					},
 					engine: null,
 				};
@@ -1217,6 +1251,7 @@ export default class BeticEngine {
 						value: mapKeys.map((key, i) => ({ key, value: mapValues[i] })),
 						expected: false,
 						constant: false,
+						name: null,
 					},
 					engine: null,
 				};
@@ -1265,6 +1300,7 @@ export default class BeticEngine {
 						},
 						constant: false,
 						expected: false,
+						name: null,
 					},
 					engine: null,
 				};
@@ -1309,6 +1345,7 @@ export default class BeticEngine {
 						provides: expression.body?.provides,
 						constant: false,
 						expected: false,
+						name: null,
 					},
 					engine: null,
 				};
@@ -1321,6 +1358,7 @@ export default class BeticEngine {
 						value: [],
 						constant: false,
 						expected: false,
+						name: null,
 					};
 
 					for await (const field of type.representation.fields) {

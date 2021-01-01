@@ -19,6 +19,7 @@ export interface TypeData {
 export interface IBeticPrimitiveRepresentation {
 	constant: boolean;
 	expected: boolean;
+	name: string | null
 }
 
 export interface BeticIntRepresentation extends IBeticPrimitiveRepresentation {

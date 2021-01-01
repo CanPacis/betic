@@ -24,6 +24,8 @@ export default class BeticUtility {
 		RuntimeError: BeticUtility.Brackets('Runtime Error'),
 	};
 
+	static OnError: any;
+
 	static Brackets(title: string): string {
 		return `${Colors.brightRed('[')}${Colors.red(title)}${Colors.brightRed(']')}`;
 	}
@@ -53,18 +55,18 @@ export default class BeticUtility {
 
 	static SerializeType(type: IBeticPrimitiveType): string {
 		let result = '';
-		
+
 		if (type.of) {
 			if (type.base === 'List') {
 				result += Colors.white('[]');
-				result += BeticUtility.SerializeType(type.of)
+				result += BeticUtility.SerializeType(type.of);
 			} else {
 				result += Colors.brightMagenta(type.base);
 				result += `${Colors.white('<')}${BeticUtility.SerializeType(type.of)}${Colors.white(
 					'>'
 				)}`;
 			}
-		}else {
+		} else {
 			result += Colors.brightMagenta(type.base);
 		}
 		return result;
@@ -135,7 +137,7 @@ export default class BeticUtility {
 		let result: Uint8Array;
 		if (
 			((list.representation.type as IBeticPrimitiveType).of as IBeticPrimitiveType).base ===
-			'Int'
+			'Byte'
 		) {
 			result = Uint8Array.from(
 				(list.representation.value as PrimitiveData[]).map(
@@ -171,6 +173,7 @@ export default class BeticUtility {
 							value,
 							expected: false,
 							constant: false,
+							name: null,
 						},
 						engine: null,
 					};
@@ -181,6 +184,7 @@ export default class BeticUtility {
 							value,
 							expected: false,
 							constant: false,
+							name: null,
 						},
 						engine: null,
 					};
@@ -191,6 +195,7 @@ export default class BeticUtility {
 							value,
 							expected: false,
 							constant: false,
+							name: null,
 						},
 						engine: null,
 					};
@@ -207,6 +212,7 @@ export default class BeticUtility {
 							value: listValues,
 							expected: false,
 							constant: false,
+							name: null,
 						},
 						engine: null,
 					};
@@ -225,6 +231,7 @@ export default class BeticUtility {
 							value: mapValues,
 							expected: false,
 							constant: false,
+							name: null,
 						},
 						engine: null,
 					};
@@ -238,6 +245,7 @@ export default class BeticUtility {
 							provides: null,
 							expected: false,
 							constant: false,
+							name: null,
 						} as BeticNativeFunctionRepresentation,
 						engine: null,
 					};
@@ -251,6 +259,7 @@ export default class BeticUtility {
 							provides: null,
 							expected: false,
 							constant: false,
+							name: null,
 						} as BeticNativeFunctionRepresentation,
 						engine: null,
 					};
@@ -261,6 +270,7 @@ export default class BeticUtility {
 							value: 'none',
 							expected: false,
 							constant: false,
+							name: null,
 						},
 						engine: null,
 					};
@@ -272,6 +282,7 @@ export default class BeticUtility {
 					value: 'none',
 					expected: false,
 					constant: false,
+					name: null,
 				},
 				engine: null,
 			};
@@ -327,6 +338,8 @@ export default class BeticUtility {
 			console.log(
 				new Array(tabs).join('\t') + new Array(position.col - (tabs - 1)).join(' ') + '^'
 			);
+
+			BeticUtility.OnError(engine)
 		}
 	}
 }
