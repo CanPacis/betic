@@ -15,7 +15,11 @@ micro -> String to_string Occult value {
 }
 
 micro -> Void print Occult value {
-	console:write(value)
+	console:print(value)
+}
+
+micro -> Void output Occult value {
+	console:output(value)
 }
 
 macro -> Void map List<Occult> list (Function<Occult> callbackfn) {

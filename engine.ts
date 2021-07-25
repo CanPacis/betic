@@ -47,6 +47,7 @@ export interface BeticTypeFrame {
 export interface Callstack {
 	name: string;
 	body: BeticProgramStatement[];
+	provides: BeticExpressionStatement | undefined;
 	type: 'function' | 'micro' | 'macro' | 'init';
 	id: string;
 }
@@ -59,6 +60,7 @@ export default class BeticEngine {
 	imports: { id: string; engine: BeticEngine }[];
 
 	primitiveFrame: BeticPrimitiveFrame[];
+	systemPrimitiveFrame: BeticPrimitiveFrame;
 	typeFrame: BeticTypeFrame;
 	callstack: Callstack[];
 	constructor(
@@ -70,6 +72,7 @@ export default class BeticEngine {
 		this.imports = [];
 		this.callstack = [];
 		this.primitiveFrame = [{}];
+		this.systemPrimitiveFrame = {};
 		this.typeFrame = {
 			Int: {
 				representation: {
@@ -210,27 +213,60 @@ export default class BeticEngine {
 			await system.init();
 			await system.run();
 
+			let frame: BeticPrimitiveFrame = {};
+			let values = Object.values(system.currentFrame).map((v) => ({
+				...v,
+				engine: system.id,
+			}));
+			Object.keys(system.currentFrame).forEach((key, i) => {
+				frame[key] = values[i];
+			});
+
+			this.systemPrimitiveFrame = frame;
 			this.imports.push({ id: system.id, engine: system });
 		}
 
 		await this.resolveImports();
 		this.callstack.push({
-			name: 'main()',
+			name: 'main',
 			body: this.parsed.program,
 			type: 'init',
+			provides: undefined,
 			id: this.id,
 		});
 	}
 
-	async run() {
+	async run(): Promise<PrimitiveData> {
 		let callstack = this.currentCallstack;
 		if (callstack) {
 			this.onStack.push(callstack);
 			for await (const instruction of callstack.body) {
 				await this.resolveStatement(instruction);
 			}
+			let provide = await BeticUtility.GeneratePrimitive(null);
+			if (callstack.provides) {
+				provide = await this.resolveExpression(
+					callstack.provides as BeticExpressionStatement
+				);
+			}
 			this.onStack.pop();
 			this.callstack.pop();
+			return provide;
+		}
+		return await BeticUtility.GeneratePrimitive(null);
+	}
+
+	async compileTemplate() {
+		for await (const instruction of this.parsed.template) {
+			switch (instruction.operation) {
+				case 'tag':
+					let data = (await BeticUtility.Parse(`Template("${instruction.name}")`))
+						.program[0];
+					await this.resolveExpression(data as BeticExpressionStatement);
+					break;
+				default:
+					break;
+			}
 		}
 	}
 
@@ -351,7 +387,7 @@ export default class BeticEngine {
 		}
 	}
 
-	async resolveTypeDefinitionStatement(statement: BeticTypeDefinitionStatement) {
+	resolveTypeDefinitionStatement(statement: BeticTypeDefinitionStatement) {
 		this.typeFrame[statement.name] = {
 			representation: {
 				fields: statement.body,
@@ -740,9 +776,14 @@ export default class BeticEngine {
 				subframe[pair.key] = pair.value;
 			});
 
+			let systemPrimitiveFrame = this.systemPrimitiveFrame;
 			this.primitiveFrame.push(subframe);
+			this.systemPrimitiveFrame = {};
 			let right = await this.resolveExpression(expression.right);
 			right.engine = supleft.engine;
+			right.representation.constant = left.constant;
+			right.representation.expected = left.expected;
+			this.systemPrimitiveFrame = systemPrimitiveFrame;
 			this.primitiveFrame.pop();
 
 			return right;
@@ -842,13 +883,55 @@ export default class BeticEngine {
 				}
 			}
 		} else {
-			BeticUtility.Error(
-				this,
-				BeticUtility.ErrorTitle.UnindexibleReference,
-				`Variable type of ${BeticUtility.SerializeType(source.type)} cannot be indexed`,
-				expression.position
-			);
-			Deno.exit();
+			let unindexibleTypes = [
+				'Int',
+				'Byte',
+				'Double',
+				'Function',
+				'Micro',
+				'Macro',
+				'Occult',
+				'None',
+				'Void',
+			];
+			if (unindexibleTypes.includes(source.type.base)) {
+				BeticUtility.Error(
+					this,
+					BeticUtility.ErrorTitle.UnindexibleReference,
+					`Variable type of ${BeticUtility.SerializeType(source.type)} cannot be indexed`,
+					expression.position
+				);
+				Deno.exit();
+			} else {
+				let index = (await this.resolveExpression(expression.index)).representation;
+
+				if (index.type.base === 'String') {
+					let result = (source as BeticCustomRepresentation).value.find(pair => pair.key === index.value)
+
+					if(result) {
+						return result.value
+					}else {
+						BeticUtility.Error(
+							this,
+							BeticUtility.ErrorTitle.InvalidValue,
+							`Index value '${index.value}' is out of bounds of source`,
+							expression.index.position
+						);
+						Deno.exit();
+					}
+				return BeticUtility.GeneratePrimitive(null);
+				} else {
+					BeticUtility.Error(
+						this,
+						BeticUtility.ErrorTitle.UnindexibleReference,
+						`Variable type of ${BeticUtility.SerializeType(
+							source.type
+						)} cannot be indexed with ${BeticUtility.SerializeType(index.type)}`,
+						expression.position
+					);
+					Deno.exit();
+				}
+			}
 		}
 	}
 
@@ -1077,34 +1160,16 @@ export default class BeticEngine {
 			}
 		} else if (type === 'Array') {
 			this.primitiveFrame.push(subframe);
-			if (func.provides) {
-				func.value.push(func.provides.body);
-			}
 			this.callstack.push({
 				name: func.name || 'anonymous',
 				body: func.value,
+				provides: func.provides?.body,
 				type: 'function',
 				id: name.engine || this.id,
 			});
-			await this.run();
+			let result = await this.run();
 			this.primitiveFrame.pop();
-			return BeticUtility.GeneratePrimitive(null);
-			// for await (const instruction of func.value) {
-			// 	await this.resolveStatement(instruction);
-			// }
-
-			// if (func.provides) {
-			// 	let provides = await this.resolveExpression(func.provides.body);
-			// 	this.primitiveFrame.pop();
-			// 	if (provides) {
-			// 		return provides;
-			// 	} else {
-			// 		return BeticUtility.GeneratePrimitive(null);
-			// 	}
-			// } else {
-			// 	this.primitiveFrame.pop();
-			// 	return BeticUtility.GeneratePrimitive(null);
-			// }
+			return result;
 		}
 
 		return BeticUtility.GeneratePrimitive(null);
@@ -1121,31 +1186,16 @@ export default class BeticEngine {
 
 		this.primitiveFrame.push(subframe);
 		this.currentFrame[micro.prototype.value] = arg;
-		if (micro.provides) {
-			micro.value.push(micro.provides.body);
-		}
 		this.callstack.push({
 			name: micro.name || 'anonymous',
 			body: micro.value,
 			type: 'micro',
+			provides: micro.provides?.body,
 			id: name.engine || this.id,
 		});
-		await this.run();
+		let result = await this.run();
 		this.primitiveFrame.pop();
-		return BeticUtility.GeneratePrimitive(null);
-
-		// if (micro.provides) {
-		// 	let provides = await this.resolveExpression(micro.provides.body);
-		// 	this.primitiveFrame.pop();
-		// 	if (provides) {
-		// 		return provides;
-		// 	} else {
-		// 		return BeticUtility.GeneratePrimitive(null);
-		// 	}
-		// } else {
-		// 	this.primitiveFrame.pop();
-		// 	return BeticUtility.GeneratePrimitive(null);
-		// }
+		return result;
 	}
 
 	async resolvePrimitiveExpression(expression: BeticPrimitiveExpression): Promise<PrimitiveData> {
@@ -1425,34 +1475,42 @@ export default class BeticEngine {
 		if (this.currentFrame[expression.value]) {
 			return this.currentFrame[expression.value];
 		} else {
-			let valid;
-			if (!request) {
-				for await (const use of this.imports) {
-					try {
-						let distantValue = await use.engine.resolveReferenceExpression(
-							expression,
-							true
-						);
-						if (distantValue) {
-							distantValue.engine = use.id;
-							valid = distantValue;
-						}
-					} catch (error) {}
-				}
-			}
-			if (valid) {
-				return valid;
+			if (this.systemPrimitiveFrame[expression.value]) {
+				return this.systemPrimitiveFrame[expression.value];
 			} else {
-				if (request) {
-					return null;
+				let valid;
+
+				if (!request) {
+					for await (const use of this.imports) {
+						if (!use.engine.system) {
+							try {
+								let distantValue = await use.engine.resolveReferenceExpression(
+									expression,
+									true
+								);
+								if (distantValue) {
+									distantValue.engine = use.id;
+									valid = distantValue;
+								}
+							} catch (error) {}
+						}
+					}
+				}
+
+				if (valid) {
+					return valid;
 				} else {
-					BeticUtility.Error(
-						this,
-						BeticUtility.ErrorTitle.UninitializedValue,
-						`Reference value '${expression.value}' cannot be found in frame`,
-						expression.position
-					);
-					Deno.exit();
+					if (request) {
+						return null;
+					} else {
+						BeticUtility.Error(
+							this,
+							BeticUtility.ErrorTitle.UninitializedValue,
+							`Reference value '${expression.value}' cannot be found in frame`,
+							expression.position
+						);
+						Deno.exit();
+					}
 				}
 			}
 		}

@@ -62,11 +62,22 @@ export default class System {
 		},
 	});
 	static console = BeticUtility.GeneratePrimitive({
-		write: () => {
+		print: () => {
 			return {
 				func(_engine: any, ...messages: PrimitiveData[]) {
 					console.log(
 						messages.map((message) => BeticUtility.SerializeValue(message)).join(' ')
+					);
+				},
+				args: [{ type: { base: 'Occult' }, value: 'data', optional: true }],
+				type: { base: 'Void' },
+			};
+		},
+		output: () => {
+			return {
+				func(_engine: any, ...messages: PrimitiveData[]) {
+					console.log(
+						messages.map((message) => BeticUtility.SerializeValuePlain(message)).join(' ')
 					);
 				},
 				args: [{ type: { base: 'Occult' }, value: 'data', optional: true }],
@@ -136,7 +147,7 @@ export default class System {
 				},
 				args: [
 					{
-						type: { base: 'List', of: { base: 'Occult' } },
+						type: { base: 'Occult', of: { base: 'Occult' } },
 						value: 'list',
 						optional: false,
 					},

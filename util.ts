@@ -4,7 +4,6 @@ import {
 	BeticFunctionRepresentation,
 	BeticListRepresentation,
 	BeticNativeFunctionRepresentation,
-	BeticPrimitiveRepresentation,
 	PrimitiveData,
 } from './type/representation.ts';
 
@@ -23,8 +22,6 @@ export default class BeticUtility {
 		CannotOpenFile: BeticUtility.Brackets('Cannot Open File'),
 		RuntimeError: BeticUtility.Brackets('Runtime Error'),
 	};
-
-	static OnError: any;
 
 	static Brackets(title: string): string {
 		return `${Colors.brightRed('[')}${Colors.red(title)}${Colors.brightRed(']')}`;
@@ -68,6 +65,23 @@ export default class BeticUtility {
 			}
 		} else {
 			result += Colors.brightMagenta(type.base);
+		}
+		return result;
+	}
+
+	static SerializeTypePlain(type: IBeticPrimitiveType): string {
+		let result = '';
+
+		if (type.of) {
+			if (type.base === 'List') {
+				result += [];
+				result += BeticUtility.SerializeTypePlain(type.of);
+			} else {
+				result += type.base;
+				result += `<${BeticUtility.SerializeTypePlain(type.of)}>`;
+			}
+		} else {
+			result += type.base;
 		}
 		return result;
 	}
@@ -121,11 +135,87 @@ export default class BeticUtility {
 					.join(', ')}) { ... }`;
 
 				return result;
+			case 'Micro':
+				var result = `micro -> ${BeticUtility.SerializeType(
+					/* @ts-ignore */
+					primitive.representation.type.of
+				)} { ... }`;
+
+				return result;
 			default:
 				var result = BeticUtility.SerializeType(primitive.representation.type) + ' {\n';
 
 				result += (value as { key: string; value: PrimitiveData }[])
 					.map((v) => `  ${v.key}: ${BeticUtility.SerializeValue(v.value)}`)
+					.join(',\n');
+
+				result += '\n}';
+				return result;
+		}
+	}
+
+	static SerializeValuePlain(primitive: PrimitiveData): string {
+		let value = primitive.representation.value;
+		switch (primitive.representation.type.base) {
+			case 'None':
+				return 'none';
+			case 'Int':
+				return value.toString();
+			case 'Double':
+				var result = value.toString();
+				if (Number.isInteger(value)) {
+					result += '.0';
+				}
+				return result;
+			case 'String':
+				return value.toString();
+			case 'Boolean':
+				return value.toString();
+			case 'List':
+				var result = '[ ';
+
+				result += (value as PrimitiveData[])
+					.map((v) => BeticUtility.SerializeValuePlain(v))
+					.join(', ');
+
+				result += ' ]';
+				return result;
+			case 'Map':
+				var result = '{\n';
+
+				result += (value as { key: string; value: PrimitiveData }[])
+					.map((v) => `  ${v.key}: ${BeticUtility.SerializeValuePlain(v.value)}`)
+					.join(',\n');
+
+				result += '\n}';
+				return result;
+			case 'Function':
+				var result = `function -> ${BeticUtility.SerializeTypePlain(
+					/* @ts-ignore */
+					primitive.representation.type.of
+				)} (${(primitive.representation as BeticFunctionRepresentation).arguments
+					.map(
+						(arg) =>
+							`${BeticUtility.SerializeTypePlain(arg.type)} ${arg.value}${
+								arg.optional ? '?' : ''
+							}`
+					)
+					.join(', ')}) { ... }`;
+
+				return result;
+			case 'Micro':
+				var result = `micro -> ${BeticUtility.SerializeTypePlain(
+					/* @ts-ignore */
+					primitive.representation.type.of
+				)} { ... }`;
+
+				return result;
+			default:
+				var result =
+					BeticUtility.SerializeTypePlain(primitive.representation.type) + ' {\n';
+
+				result += (value as { key: string; value: PrimitiveData }[])
+					.map((v) => `  ${v.key}: ${BeticUtility.SerializeValuePlain(v.value)}`)
 					.join(',\n');
 
 				result += '\n}';
@@ -199,8 +289,9 @@ export default class BeticUtility {
 						},
 						engine: null,
 					};
+    // deno-lint-ignore no-case-declarations
 				case 'Array':
-					let listValues: PrimitiveData[] = [];
+					const listValues: PrimitiveData[] = [];
 
 					for await (const v of value) {
 						listValues.push(await BeticUtility.GeneratePrimitive(v));
@@ -216,8 +307,9 @@ export default class BeticUtility {
 						},
 						engine: null,
 					};
+    // deno-lint-ignore no-case-declarations
 				case 'Object':
-					let mapValues: { key: string; value: PrimitiveData }[] = [];
+					const mapValues: { key: string; value: PrimitiveData }[] = [];
 					for await (const [i, v] of Object.keys(value).entries()) {
 						mapValues.push({
 							key: v,
@@ -316,30 +408,42 @@ export default class BeticUtility {
 			console.log(`${title} in ${engine.path}`, '\n');
 			console.log(message, `\nError occured at anonymous engine`);
 		} else {
-			console.log(`${title} in ${engine.path}`, '\n');
-			console.log(
-				message,
-				`\nError occured at ${Colors.brightBlue(engine.fileName)} ${Colors.brightBlue(
-					position.line.toString()
-				)}:${Colors.brightBlue(position.col.toString())}`,
-				'\n'
-			);
+			if (position.line < 1 || position.col < 1) {
+				console.log(`${title} in ${engine.path}`, '\n');
+				console.log(
+					message,
+					`\nError occured at anonymous position thrown from ${Colors.brightBlue(
+						engine.fileName
+					)}`,
+					'\n'
+				);
+			} else {
+				console.log(`${title} in ${engine.path}`, '\n');
+				console.log(
+					message,
+					`\nError occured at ${Colors.brightBlue(engine.fileName)} ${Colors.brightBlue(
+						position.line.toString()
+					)}:${Colors.brightBlue(position.col.toString())}`,
+					'\n'
+				);
 
-			let tabs = 0;
-			let line = engine.content.split('\n')[position.line - 1];
+				let tabs = 0;
+				let line = engine.content.split('\n')[position.line - 1];
 
-			for (let i = 0; i < line.length; i++) {
-				if (line[i] === '\r' || line[i] === '\t') {
-					tabs++;
+				for (let i = 0; i < line.length; i++) {
+					if (line[i] === '\r' || line[i] === '\t') {
+						tabs++;
+					}
 				}
+
+				console.log(Colors.gray(engine.content.split('\n')[position.line - 1]));
+				console.log(
+					new Array(tabs).join('\t') + new Array(position.col - tabs).join(' ') + '^'
+				);
 			}
-
-			console.log(Colors.gray(engine.content.split('\n')[position.line - 1]));
-			console.log(
-				new Array(tabs).join('\t') + new Array(position.col - (tabs - 1)).join(' ') + '^'
-			);
-
-			BeticUtility.OnError(engine)
 		}
+		BeticUtility.OnError();
 	}
+
+	static OnError() {}
 }

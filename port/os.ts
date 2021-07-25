@@ -5,9 +5,10 @@ import BeticUtility from '../util.ts';
 
 export default class Os {
 	static EngineOsPort = BeticUtility.GeneratePrimitive({
-		read_file: async (engine: any, parameter: PrimitiveData) => {
+  // deno-lint-ignore require-await
+		read_file: async () => {
 			return {
-				async func(engine: any, parameter: PrimitiveData) {
+				async func(parameter: PrimitiveData) {
 					let readPath = parameter.representation.value as string;
 					let result: Number[];
 
@@ -24,9 +25,10 @@ export default class Os {
 				args: [{ type: { base: 'String' }, value: 'path', optional: false }],
 			};
 		},
-		write_file: async (engine: any, parameter: PrimitiveData, data: PrimitiveData) => {
+  // deno-lint-ignore require-await
+		write_file: async () => {
 			return {
-				async func(engine: any, parameter: PrimitiveData, data: PrimitiveData) {
+				async func(_engine: any, parameter: PrimitiveData, data: PrimitiveData) {
 					let readPath = parameter.representation.value as string;
 					if (data.representation.type.base === 'String') {
 						await Deno.writeFile(
@@ -44,6 +46,14 @@ export default class Os {
 					{ type: { base: 'String' }, value: 'path', optional: false },
 					{ type: { base: 'Occult' }, value: 'data', optional: false },
 				],
+			};
+		},
+		cwd: () => {
+			return {
+				func(engine: any) {
+					return BeticUtility.GeneratePrimitive(engine.path);
+				},
+				type: { base: 'String' },
 			};
 		},
 	});

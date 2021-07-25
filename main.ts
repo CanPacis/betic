@@ -2,8 +2,8 @@ import * as Colors from 'https://deno.land/std@0.82.0/fmt/colors.ts';
 import BeticEngine, { Callstack } from './engine.ts';
 import BeticUtility from './util.ts';
 
-let engines: { id: string; engine: BeticEngine; entry: boolean }[] = [];
-let globalCallstack: Callstack[] = [];
+const engines: { id: string; engine: BeticEngine; entry: boolean }[] = [];
+const globalCallstack: Callstack[] = [];
 BeticUtility.OnError = () => {
 	let findEngine = (id: string): { id: string; engine: BeticEngine; entry: boolean } | null => {
 		let e = engines.find((e) => e.id === id);
@@ -31,7 +31,7 @@ BeticUtility.OnError = () => {
 	);
 };
 
-let engine = new BeticEngine(Deno.args[0], {
+const engine = new BeticEngine(Deno.args[0], {
 	push(callstack: Callstack) {
 		globalCallstack.push(callstack);
 	},

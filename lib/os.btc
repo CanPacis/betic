@@ -23,3 +23,5 @@ macro -> Void write_to_file String data (String path) {
 macro -> Void write_to_file_as_bytes List<Byte> data (String path) {
 	EngineOsPort:write_file(path, data)
 }
+
+const cwd := EngineOsPort:cwd()

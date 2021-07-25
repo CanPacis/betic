@@ -1,0 +1,7 @@
+const test := "a"
+
+console:print(test)
+console:output(2+5)
+
+const value := 10 * 10 
+value.output
